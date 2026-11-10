@@ -1,0 +1,2 @@
+steady: 23 requests in 265s, ok=21, peak_queue=1
+status {'ok': 21, 'timeout': 2} grade {'correct': 10, 'refused_wrongly': 3, 'wrong': 3, '': 2, 'refused_correctly': 5}

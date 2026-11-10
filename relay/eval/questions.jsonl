@@ -1,0 +1,23 @@
+{"id": "q01", "question": "Why does the Transformer scale the dot products by 1/sqrt(d_k)?", "kind": "answerable", "gold": "(small gradient|extremely small|grow large|large in magnitude|large magnitude)"}
+{"id": "q02", "question": "How many parallel attention heads does the base Transformer use?", "kind": "answerable", "gold": "\\b(8|eight)\\b"}
+{"id": "q03", "question": "What BLEU score does the base Transformer model get on WMT 2014 English-to-German?", "kind": "trap", "gold": "27\\.3"}
+{"id": "q04", "question": "What BLEU score does the big Transformer get on WMT 2014 English-to-German?", "kind": "answerable", "gold": "28\\.4"}
+{"id": "q05", "question": "How long did the big Transformer take to train, and on what hardware?", "kind": "answerable", "gold": "3\\.5 days"}
+{"id": "q06", "question": "What value of label smoothing was used when training the Transformer?", "kind": "answerable", "gold": "0\\.1"}
+{"id": "q07", "question": "What is the inner-layer dimensionality of the Transformer's feed-forward network?", "kind": "answerable", "gold": "2048"}
+{"id": "q08", "question": "How many identical layers are in the Transformer encoder stack?", "kind": "answerable", "gold": "\\b(6|six)\\b"}
+{"id": "q09", "question": "For how many steps were the base Transformer models trained?", "kind": "answerable", "gold": "100,?000"}
+{"id": "q10", "question": "What theoretical latency does Moshi achieve?", "kind": "answerable", "gold": "160"}
+{"id": "q11", "question": "How many quantizers does the Mimi codec use?", "kind": "answerable", "gold": "\\b(8|eight)\\b"}
+{"id": "q12", "question": "What frame rate does Mimi operate at?", "kind": "answerable", "gold": "12\\.5"}
+{"id": "q13", "question": "What bitrate does Mimi reach with its quantizers?", "kind": "answerable", "gold": "1\\.1 ?kbps"}
+{"id": "q14", "question": "How many parameters does Helium have and how many tokens was it pretrained on?", "kind": "answerable", "gold": "(7B|7 billion).*(2\\.1T|2\\.1 ?trillion)|(2\\.1T|2\\.1 ?trillion).*(7B|7 billion)"}
+{"id": "q15", "question": "Which model are Mimi's semantic tokens distilled from?", "kind": "answerable", "gold": "WavLM"}
+{"id": "q16", "question": "What does the routing module in dynamic chunking use to predict chunk boundaries?", "kind": "answerable", "gold": "cosine similarity"}
+{"id": "q17", "question": "Which paper introduces a ratio loss, and what is it for?", "kind": "answerable", "gold": "(Dynamic|H-Net).*(compress|ratio|boundar)"}
+{"id": "q18", "question": "What does an H-Net with one stage of hierarchy at the byte level outperform?", "kind": "answerable", "gold": "(BPE|Transformer)"}
+{"id": "q19", "question": "What BLEU score does the Transformer reach on WMT 2019?", "kind": "unanswerable", "gold": ""}
+{"id": "q20", "question": "What score does the Transformer paper report on HumanEval?", "kind": "unanswerable", "gold": ""}
+{"id": "q21", "question": "How does the Transformer paper say it compares to BERT?", "kind": "unanswerable", "gold": ""}
+{"id": "q22", "question": "What reinforcement learning from human feedback procedure does Moshi use?", "kind": "unanswerable", "gold": ""}
+{"id": "q23", "question": "What is the capital of France?", "kind": "unanswerable", "gold": ""}

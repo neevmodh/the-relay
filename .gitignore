@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+data/papers/*.pdf
+submission/
+.DS_Store
+*.log
+The_Relay_Assignment_Brief.pdf

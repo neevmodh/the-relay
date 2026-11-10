@@ -1,0 +1,2 @@
+sweep_C: 23 requests in 441s, ok=23, peak_queue=1
+status {'ok': 23} grade {'correct': 14, 'refused_wrongly': 3, 'wrong': 1, 'refused_correctly': 5}

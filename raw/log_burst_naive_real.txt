@@ -1,0 +1,2 @@
+burst_naive_real: 10 requests in 1s, ok=5, peak_queue=0
+status {'ok': 5, 'rate_limited': 5} grade {'correct': 4, '': 5, 'refused_wrongly': 1}

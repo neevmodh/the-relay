@@ -1,0 +1,14 @@
+{
+  "ttft_ms_median": 768.1,
+  "ttft_sigma": 0.339,
+  "ms_per_prompt_token": 0.0299,
+  "decode_tokens_per_s": 2000,
+  "out_tokens_mean": 69.8,
+  "out_tokens_sd": 25.3,
+  "refusal_prob": 0.198,
+  "tpm": 8000,
+  "rpm": 30,
+  "rpd": 1000,
+  "hidden_reasoning_tokens": 40,
+  "stream_chunk_tokens": 8
+}

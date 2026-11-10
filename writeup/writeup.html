@@ -1,0 +1,330 @@
+<html><head><meta charset='utf-8'><style>@page{size:A4;margin:10mm 11mm}body{font:9.7pt/1.34 Helvetica,Arial,sans-serif;color:#111}
+h1{font-size:13pt;margin:0 0 3px}p{margin:0 0 5.5px;text-align:justify}code{font-size:8.6pt;background:#f1f1f1;padding:0 1px}
+.tables{page-break-before:always}.tables h3{font-size:9.5pt;margin:8px 0 3px}
+table{border-collapse:collapse;width:100%;font-size:7.4pt;margin-bottom:3px}th,td{border:1px solid #bbb;padding:1.5px 3px;text-align:left;vertical-align:top}th{background:#eef1f4}
+.note{font-size:7.3pt;color:#333}</style></head><body><h1>The Relay: a rate-limited cited-answer pipeline</h1>
+<p><strong>1. What I built and why.</strong> Python/asyncio pipeline over the three pinned arXiv papers (1706.03762v7, 2410.00037v1, 2507.07955v2): <strong>retrieve</strong> (BM25 over page-aware pieces; a tool, no tokens) → <strong>gate</strong> (refuse with no model call if the best piece covers &lt;35% of the question's terms) → <strong>generate</strong> (streamed, cites <code>[n]</code>, must say "the papers do not say" otherwise) → <strong>verify</strong> (every claim cites an existing passage; one regeneration with more passages if not). Model: <code>openai/gpt-oss-20b</code> on Groq's free tier (<code>llama-3.1-8b-instant</code> is not on my account). <strong>The decision that shaped it most:</strong> the binding limit is <em>tokens per minute</em> (8,000, about 10 answers/min), not requests, so one shared limiter owns it and requests that cannot start within <strong>8 s</strong> are turned away at once, rather than queued to a 20 s deadline. Cost: at 5× overload 78% of people get an instant "no" instead of a slow "yes". Measured gain: served requests' median wait fell from 16.0 s to 6.0 s at the same throughput (40 vs 39 answered).</p>
+<p><strong>2. The real service and my stand-in.</strong> Limits are in Table 1, found by reading <code>x-ratelimit-*</code> headers and by hitting limits on purpose (a 40-request burst gave exactly 30 ok then <code>RPM: Limit 30</code>; a naive 10-request burst of ~1.4k-token prompts gave <code>TPM: Limit 8000, Used 7433, Requested 1477</code>). The stand-in is an SSE server with the same headers and 429 bodies; time-to-first-token (lognormal, median 768 ms, σ 0.34), output length (mean 70 tokens) and refusal rate (19.8%) are fitted to 91 real calls; prompt size had no effect on latency (r = 0.02) so none is modelled. It is <strong>least like the real thing</strong> in the tail and under load: its p99 first token is 1.7 s against 2.75 s real (n = 23, so indicative), and its failure, hang and load-slowdown rates are guesses, because I never pushed the real service into overload. Its answers are canned text, so I only graded quality on real runs.</p>
+<p><strong>3. Results.</strong> Tables 1–3 (last page) are computed from <code>results.csv</code> by <code>relay/analysis/tables.py</code>; peak queue and offered rate come from <code>raw/scenarios.jsonl</code>. Real runs: steady, burst, naive burst, retrieval sweep. Stand-in runs: sustained overload, limit halved, daily budget gone (limits can't be exhausted on the real account). Numbers we could not have guessed: <strong>(a)</strong> median time from first token to last is <strong>21 ms</strong> (n = 101), so first token ≈ total time (ratio 0.97): a reasoning model hides its thinking and streaming buys nothing; <strong>(b)</strong> the daily allowance refills continuously (<code>reset-requests</code> = used × 86.4 s), not at midnight, and rejected requests did not count against it (883 → 854 after 30 ok + 10 rejected); <strong>(c)</strong> one answer is charged about 40 more tokens than the API reports (138 vs 96 on a 1-request probe); <strong>(d)</strong> 15 of 15 immediate retries failed. Quality, 23 questions I wrote (18 answerable, 5 not), chosen setting: 60.9% correct and cited, 4.3% wrong, 21.7% correctly refused, 13.0% wrongly refused; 773 tokens per answer (≈ $0.07 per 1,000 answers at list price, notional).</p>
+<p><strong>4. Where the time goes.</strong> Slowest real request (<code>sweep_A-0018</code>): 3,222 ms total = 0.2 ms waiting in my queue + 0 ms retrying + 3,193 ms inside the provider call before the first token + 29 ms streaming. So the delay came <strong>before</strong> the first token, and since a typical request of the same size (35 output tokens) is first-token ≈ 790 ms, about 2.4 s was provider-side. I can't split provider queueing from model thinking from the client side. Contrast <code>burst-0011</code>: 2,123 ms = 1,200 ms waiting in my queue + 922 ms working. A rate-limited request in the naive burst: 512 ms, all of it 4 rejected attempts.</p>
+<p><strong>5. When a limit is hit.</strong> <em>Per-minute:</em> sliding 60 s token and request windows at 90% headroom, FIFO. When committed tokens exceed 70% of the cap (or the queue builds) later arrivals are <strong>degraded</strong> (3→2 passages, ≤250 output tokens, no regeneration); if they still cannot start in 8 s they are <strong>dropped</strong>. Who is delayed: everyone admitted, by ≤8 s. Dropped: the tail of a burst. Weaker answer: 33 of 39 served at 5× overload. Why: tokens are the scarce resource, a smaller context is cheaper than refusing someone, and a quick no beats a slow one. The limiter also shrinks its belief after a 429 (×0.7) so an unannounced halving of both limits cost only 1 of 24 requests a provider rejection (66.7% served, 29.2% gave up waiting). <em>Per-day:</em> a daily-limit 429 (or remaining = 0) stops model calls entirely (section 7).</p>
+<p><strong>Retrieval: quality versus cost.</strong> Four settings, same 23 questions (Table 3). Piece size 120 / 3 pieces: 60.9% correct, 773 tokens. 200 / 6 / re-rank: 60.9%, 1,533 tokens. 200 / 4: 57.1% (n = 21; 2 requests lost to a bug I fixed afterwards). 200 / 5 / re-rank / stemming: 56.5%, 8.7% wrong. <strong>I chose 120 / 3 / no re-rank:</strong> equal best quality at half the tokens. Doubling context bought no question; q03, q11 and q14 were refused wrongly at all four settings (q15 failed at three), so the cause is the retriever, not the amount fetched. Near the limit I drop to 2 pieces; if the daily budget is gone I skip the model entirely.</p>
+<p><strong>How this library will mislead a naive retriever.</strong> (1) <em>Numbers live in table rows, headline numbers in the abstract:</em> "What BLEU does the <strong>base</strong> Transformer get on WMT14 En-De?" The abstract says 28.4 (that is the <em>big</em> model); the right 27.3 is a table row on p.8 that ranked 5th–7th, so every setting refused wrongly. (2) <em>Lexical mismatch:</em> "How many parameters does Helium have?" The text says "7B-parameter"; the answer piece ranked 22nd. "Mimi's" never matches "Mimi". Stemming fixed q15 but broke q04 and q16. (3) <em>One paper dominates and its appendix is noise:</em> Moshi is 51% of the text and its appendix holds sample conversations, so "What is the capital of France?" scores 5.6 BM25 there and passes a naive score threshold; "How does the Transformer compare to BERT?" fetches Moshi, the only paper that mentions BERT.</p>
+<p><strong>6. Retries.</strong> Up to 2 retries, only for 429, timeout and 5xx; wait = <code>retry-after</code> plus jitter; never past the deadline; a daily-limit 429 is not retried. <strong>Where retrying made things worse:</strong> the naive policy (no limiter, 3 immediate retries) on the real service: 5 of 10 requests failed after 4 attempts each within about 0.5 s, though <code>retry-after</code> said 7–8 s, so 20 rejected calls for 5 requests. At 5× overload on the stand-in it made 2.58 retries per request and served 15.6% against 21.7% with the limiter.</p>
+<p><strong>7. What the person sees.</strong> At 3 pm with the budget gone, in a median of 4 ms and with no model call: "Today's model capacity is used up, so here are the most relevant passages instead of a written answer:" plus the top 3 passages with paper, version and page. Half of those (5 of 10) contained the answer. Known gap: I flag the budget as gone and never clear it, but the real allowance refills about every 86 s per request.</p>
+<p><strong>8. Unsure, left out, learned.</strong> <em>Least certain:</em> that the 8 s patience matches how long people really wait (I did not measure it) and that hidden reasoning tokens are about 40 per call (one data point); if either is wrong the limiter over- or under-admits, and the 429 feedback is my only protection. <em>Not built:</em> dense/embedding retrieval or an LLM re-ranker (it would spend the scarce tokens and add failure modes); priority classes and answer caching. Also not measured: the real tokens-per-day limit. <em>New to me:</em> in a sliding-window limit, a rejected request needs <code>Requested − (Limit − Used)</code> tokens to age out, here 1,477 − 567 = 910 tokens, which is the 6.8 s the server told me; retrying sooner cannot succeed.</p>
+<p><strong>Your feedback on Vaani.</strong> The page's strongest claim is latency ("sub-500 ms", "~450 ms p90"), but it never says what is timed (end of speech to first audio?), at which load, or why both figures appear. A text-only fetch showed the counters as 0 (likely animation; not checked in a browser). I would define the latency number on the page, because it is what a buyer will test.</p>
+<p><strong>How I worked with the assistant.</strong> Full raw session: <code>history/conversation.md</code> (my API key redacted). <em>Prompts that mattered:</em> "make a plan and set up the project layout"; pasting my Groq key so it could probe the real service; "use auto mode, complete it". <em>What it got wrong, caught by its own measurements:</em> it graded three correct answers wrong (the model wrote <code>3.5 days</code> with a non-breaking space and cited as <code>【1】</code>), which also made the pipeline regenerate and then throw away good answers; it first queued every request up to a 20 s deadline (median first token 16.9 s under overload). <em>Decision overruled:</em> none in this session; I accepted its design and measurements. <em>What is mine:</em> the framing and the go-ahead only. The code, the 23 questions, the 120 / 3 choice and the 8 s patience were written or proposed by the assistant, so I must be able to explain and change each of them live.</p><div class='tables'><h1>Required results tables</h1><h3>Table 1: limits found in the real service</h3><table>
+<thead>
+<tr>
+<th>Limit</th>
+<th>Value you found</th>
+<th>How you found it</th>
+<th>Confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Requests per minute</td>
+<td>30</td>
+<td>Burst of 40 tiny concurrent requests: exactly 30 ok, 10 rejected; body says <code>requests per minute (RPM): Limit 30, Used 30</code></td>
+<td>high</td>
+</tr>
+<tr>
+<td>Tokens per minute</td>
+<td>8,000</td>
+<td><code>x-ratelimit-limit-tokens: 8000</code>; naive burst of 10 real requests: 5 rejected with <code>TPM: Limit 8000, Used 7433, Requested 1477</code>; remaining-tokens refills continuously</td>
+<td>high</td>
+</tr>
+<tr>
+<td>Requests per day</td>
+<td>1,000</td>
+<td><code>x-ratelimit-limit-requests: 1000</code>, falls by 1 per successful call; <code>reset-requests</code> = used × 86.4 s (rolling refill). Never reached</td>
+<td>medium</td>
+</tr>
+<tr>
+<td>Tokens per day</td>
+<td>not measured</td>
+<td>In no header and never reached; I did not spend the quota to find it (about 130k tokens used in all)</td>
+<td>low</td>
+</tr>
+<tr>
+<td>Requests in flight at once</td>
+<td>no separate limit found (40 concurrent accepted until RPM bit)</td>
+<td>Burst of 40 and burst of 8 produced no concurrency error</td>
+<td>low</td>
+</tr>
+<tr>
+<td>What it returns when a limit is hit</td>
+<td>HTTP 429, JSON message naming the limit, integer <code>retry-after</code> header (2 to 8 s seen)</td>
+<td>Seen in the probe burst and the naive real burst</td>
+<td>high</td>
+</tr>
+<tr>
+<td>Time until it recovers</td>
+<td>RPM about 4 s (2 s stated); TPM 6.8 to 8 s stated, depends on request size</td>
+<td>RPM: polled once per 3 s after the burst. TPM: from <code>retry-after</code>, not independently timed</td>
+<td>medium</td>
+</tr>
+</tbody>
+</table><h3>Table 2a: latency, one row per load scenario</h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Real or stand-in</th>
+<th>Requests sent</th>
+<th>Duration (s)</th>
+<th>Offered rate (per min)</th>
+<th>First token p50 / p95 / p99 (ms)</th>
+<th>Total time p50 / p95 / p99 (ms)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>steady (= sweep_A)</td>
+<td>real</td>
+<td>23</td>
+<td>264.5</td>
+<td>5.2</td>
+<td>790 / 1185 / 2753</td>
+<td>817 / 1273 / 2797</td>
+</tr>
+<tr>
+<td>burst_naive_real</td>
+<td>real</td>
+<td>10</td>
+<td>1.0</td>
+<td>623.9</td>
+<td>742 / 829 / 839</td>
+<td>510 / 900 / 918</td>
+</tr>
+<tr>
+<td>burst</td>
+<td>real</td>
+<td>12</td>
+<td>2.4</td>
+<td>303.4</td>
+<td>1201 / 2011 / 2041</td>
+<td>1186 / 2046 / 2107</td>
+</tr>
+<tr>
+<td>overload_q20</td>
+<td>stand-in</td>
+<td>180</td>
+<td>192.0</td>
+<td>60.3</td>
+<td>16897 / 19546 / 19741</td>
+<td>8 / 19124 / 20013</td>
+</tr>
+<tr>
+<td>overload_naive</td>
+<td>stand-in</td>
+<td>180</td>
+<td>179.0</td>
+<td>60.3</td>
+<td>864 / 3410 / 4837</td>
+<td>13 / 1020 / 3085</td>
+</tr>
+<tr>
+<td>burst_standin</td>
+<td>stand-in</td>
+<td>40</td>
+<td>3.4</td>
+<td>711.6</td>
+<td>1588 / 2983 / 3144</td>
+<td>1278 / 2663 / 3032</td>
+</tr>
+<tr>
+<td>overload</td>
+<td>stand-in</td>
+<td>180</td>
+<td>185.6</td>
+<td>60.3</td>
+<td>6730 / 8188 / 9402</td>
+<td>8 / 7820 / 8670</td>
+</tr>
+<tr>
+<td>limit_halved</td>
+<td>stand-in</td>
+<td>24</td>
+<td>172.6</td>
+<td>8.3</td>
+<td>689 / 7992 / 8184</td>
+<td>617 / 15773 / 18733</td>
+</tr>
+<tr>
+<td>daily_exhausted</td>
+<td>stand-in</td>
+<td>30</td>
+<td>174.0</td>
+<td>10.3</td>
+<td>947 / 1541 / 1743</td>
+<td>828 / 1544 / 1734</td>
+</tr>
+</tbody>
+</table>
+<h3>Table 2b: outcomes, same rows</h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Succeeded %</th>
+<th>Rate-limited %</th>
+<th>Timed out or given up %</th>
+<th>Retries per request</th>
+<th>Peak queue length</th>
+<th>Tokens per answer</th>
+<th>Cost per 1,000 answers (USD, notional)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>steady (= sweep_A)</td>
+<td>100.0</td>
+<td>0.0</td>
+<td>0.0</td>
+<td>0.00</td>
+<td>1</td>
+<td>773</td>
+<td>0.072</td>
+</tr>
+<tr>
+<td>burst_naive_real</td>
+<td>50.0</td>
+<td>50.0</td>
+<td>0.0</td>
+<td>1.50</td>
+<td>0</td>
+<td>1441</td>
+<td>0.126</td>
+</tr>
+<tr>
+<td>burst</td>
+<td>83.3</td>
+<td>0.0</td>
+<td>16.7</td>
+<td>0.00</td>
+<td>8</td>
+<td>684</td>
+<td>0.065</td>
+</tr>
+<tr>
+<td>overload_q20</td>
+<td>22.2</td>
+<td>0.6</td>
+<td>77.2</td>
+<td>0.01</td>
+<td>20</td>
+<td>607</td>
+<td>0.057</td>
+</tr>
+<tr>
+<td>overload_naive</td>
+<td>15.6</td>
+<td>84.4</td>
+<td>0.0</td>
+<td>2.58</td>
+<td>0</td>
+<td>791</td>
+<td>0.073</td>
+</tr>
+<tr>
+<td>burst_standin</td>
+<td>22.5</td>
+<td>0.0</td>
+<td>77.5</td>
+<td>0.00</td>
+<td>35</td>
+<td>706</td>
+<td>0.067</td>
+</tr>
+<tr>
+<td>overload</td>
+<td>21.7</td>
+<td>0.0</td>
+<td>78.3</td>
+<td>0.01</td>
+<td>9</td>
+<td>603</td>
+<td>0.057</td>
+</tr>
+<tr>
+<td>limit_halved</td>
+<td>66.7</td>
+<td>4.2</td>
+<td>29.2</td>
+<td>0.12</td>
+<td>2</td>
+<td>613</td>
+<td>0.056</td>
+</tr>
+<tr>
+<td>daily_exhausted</td>
+<td>66.7</td>
+<td>33.3</td>
+<td>0.0</td>
+<td>0.00</td>
+<td>1</td>
+<td>630</td>
+<td>0.058</td>
+</tr>
+</tbody>
+</table>
+<h3>Table 3: retrieval settings</h3>
+<table>
+<thead>
+<tr>
+<th>Setting (piece size, pieces fetched, re-rank)</th>
+<th>Questions asked</th>
+<th>Correct and cited %</th>
+<th>Wrong %</th>
+<th>Correctly refused %</th>
+<th>Tokens per answer</th>
+<th>First token p50 / p95 (ms)</th>
+<th>Total time p50 / p95 (ms)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>size120_k3_rr0</td>
+<td>23</td>
+<td>60.9</td>
+<td>4.3</td>
+<td>21.7</td>
+<td>773</td>
+<td>790 / 1185</td>
+<td>817 / 1273</td>
+</tr>
+<tr>
+<td>size200_k4_rr0</td>
+<td>21</td>
+<td>57.1</td>
+<td>4.8</td>
+<td>23.8</td>
+<td>1309</td>
+<td>916 / 1112</td>
+<td>919 / 1115</td>
+</tr>
+<tr>
+<td>size200_k5_rr1_stem</td>
+<td>23</td>
+<td>56.5</td>
+<td>8.7</td>
+<td>21.7</td>
+<td>1263</td>
+<td>825 / 1354</td>
+<td>858 / 1356</td>
+</tr>
+<tr>
+<td>size200_k6_rr1</td>
+<td>23</td>
+<td>60.9</td>
+<td>4.3</td>
+<td>21.7</td>
+<td>1533</td>
+<td>797 / 1549</td>
+<td>826 / 1576</td>
+</tr>
+</tbody>
+</table><p class='note'>Notes. Real = Groq <code>openai/gpt-oss-20b</code>; stand-in = my server calibrated from real measurements. Percentiles: linear interpolation over the requests that have the value (p95/p99 of 23 requests are near the maximum). Total time includes requests that were turned away (a turned-away request takes ms, so total p50 can be tiny in overload). Rate-limited % counts requests that got no model answer because of a limit (provider 429 or the passages-only reply after the daily budget). 'Timed out or given up' includes requests my limiter refused after 8 s patience. Table 3 percentages do not sum to 100: the rest are answers refused wrongly (3 of 23 at every setting), and size200_k4 has 21 graded rows (2 requests lost to a bug fixed afterwards; run kept as <code>steady_v0</code>). Cost is notional list price ($0.075 / $0.30 per M tokens), the free tier costs nothing. Tokens per answer count API-reported tokens only. Scenarios <code>overload_q20</code> (queue to 20 s) and <code>overload_naive</code> are in results.csv for comparison with <code>overload</code>.</p></div></body></html>

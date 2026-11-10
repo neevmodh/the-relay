@@ -1,0 +1,8 @@
+burst_standin: 40 requests in 3s, ok=9, peak_queue=35
+status {'ok': 9, 'timeout': 31} grade {'wrong': 7, 'refused_wrongly': 2, '': 31}
+overload: 180 requests in 186s, ok=39, peak_queue=9
+status {'ok': 39, 'timeout': 141} grade {'refused_wrongly': 9, 'wrong': 28, '': 141, 'refused_correctly': 2}
+limit_halved: 24 requests in 173s, ok=16, peak_queue=2
+status {'ok': 16, 'rate_limited': 1, 'timeout': 7} grade {'wrong': 11, '': 8, 'refused_wrongly': 3, 'refused_correctly': 2}
+daily_exhausted: 30 requests in 174s, ok=20, peak_queue=1
+status {'ok': 20, 'rate_limited': 10} grade {'wrong': 19, 'refused_wrongly': 5, 'refused_correctly': 1, 'correct': 5}

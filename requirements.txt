@@ -1,0 +1,9 @@
+httpx>=0.27
+python-dotenv
+pypdf
+rank-bm25
+fastapi
+uvicorn
+pandas
+numpy
+matplotlib
